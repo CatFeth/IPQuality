@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# IPQuality Reborn v4.0.0 - Ultimate Dual-Stack (IPv4 + IPv6) Diagnostics
+# IPQuality Reborn v4.0.1 - Ultimate Dual-Stack (IPv4 + IPv6) Diagnostics
 # Zero-Config Hybrid Engine: 9 IP Databases + Media/AI + CDN + Port 25 + RBL
 # ==============================================================================
 
 export LC_ALL=C
-VERSION="v4.0.0 (Ultimate)"
+VERSION="v4.0.1 (Ultimate)"
 REPORT_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
 STACK_MODE="dual"
@@ -62,7 +62,16 @@ check_deps() {
     fi
 }
 
-# --- UI Helpers ---
+# Безопасное извлечение из JSON (не превращает boolean false в N/A!)
+jq_get() {
+    local file="$1"; local query="$2"
+    [ ! -s "$file" ] && { echo "N/A"; return; }
+    local res=$(jq -r "(${query}) | if . == null then \"N/A\" else tostring end" "$file" 2>/dev/null)
+    [ -z "$res" ] && res="N/A"
+    echo "$res"
+}
+
+# --- UI Helpers (Strict 10-char badges + 1 space = 11 chars per column) ---
 format_type_badge() {
     local val=$(echo "$1" | tr '[:upper:]' '[:lower:]')
     case "$val" in
@@ -89,32 +98,39 @@ format_type_badge() {
     esac
 }
 
+# Шкала Levels имеет длину ровно 44 символа (16 зеленых + 14 желтых + 14 красных)
 draw_score_bar() {
     local label="$1"; local score="$2"; local disp_val="$3"; local level_txt="$4"
-    local bar_len=$(awk -v s="$score" 'BEGIN { len=int(s * 0.42); if(len<1) len=1; if(len>42) len=42; print len }')
+    local bar_len=$(awk -v s="$score" 'BEGIN { len=int(s * 0.44); if(len<1) len=1; if(len>44) len=44; print len }')
     local bar_color="$BG_GREEN"; local txt_color="$C_GREEN"
-    if awk -v s="$score" 'BEGIN { exit !(s >= 65) }'; then
-        bar_color="$BG_RED"; txt_color="$C_RED"
-    elif awk -v s="$score" 'BEGIN { exit !(s >= 25) }'; then
-        bar_color="$BG_YELLOW"; txt_color="$C_YELLOW"
-    fi
+
+    case "$level_txt" in
+        High|VeryHigh|DoS|Risky|HighRisk)
+            bar_color="$BG_RED"; txt_color="$C_RED" ;;
+        Medium|Elevated|Suspicious)
+            bar_color="$BG_YELLOW"; txt_color="$C_YELLOW" ;;
+        *)
+            bar_color="$BG_GREEN"; txt_color="$C_GREEN" ;;
+    esac
+
     local spaces=$(printf "%${bar_len}s" "")
-    printf "%-14s ${bar_color}${spaces}${C_RESET} ${txt_color}${C_BOLD}%s|%s${C_RESET}\n" "$label:" "$disp_val" "$level_txt"
+    printf "${C_CYAN}%-15s${C_RESET}${bar_color}${spaces}${C_RESET} ${txt_color}${C_BOLD}%s|%s${C_RESET}\n" "${label}:" "$disp_val" "$level_txt"
 }
 
+# Строго 8 символов на колонку в Risk Factors
 fmt_bool() {
     case "$1" in
-        true|Yes|yes|1) printf "${C_RED}${C_BOLD}%-9s${C_RESET}" "Yes" ;;
-        false|No|no|0)  printf "${C_GREEN}%-9s${C_RESET}" "No" ;;
-        *)              printf "${C_DIM}%-9s${C_RESET}" "N/A" ;;
+        true|Yes|yes|1) printf "${C_RED}${C_BOLD}%-8s${C_RESET}" "Yes" ;;
+        false|No|no|0)  printf "${C_GREEN}%-8s${C_RESET}" "No" ;;
+        *)              printf "${C_DIM}%-8s${C_RESET}" "N/A" ;;
     esac
 }
 
 fmt_reg() {
     if [ -n "$1" ] && [ "$1" != "null" ] && [ "$1" != "N/A" ] && [ ${#1} -eq 2 ]; then
-        printf "${C_GREEN}%-9s${C_RESET}" "[${1}]"
+        printf "${C_GREEN}%-8s${C_RESET}" "[${1}]"
     else
-        printf "${C_DIM}%-9s${C_RESET}" "N/A"
+        printf "${C_DIM}%-8s${C_RESET}" "N/A"
     fi
 }
 
@@ -150,11 +166,9 @@ run_check_for_stack() {
     local TMP_DIR="$BASE_TMP/${IPV_LABEL}"
     mkdir -p "$TMP_DIR"
 
-    # --- 1. Fetch All 9 IP Databases in Parallel (Gateway + Direct Fallbacks) ---
-    # 1a. MaxMind via Check.Place
+    # --- 1. Fetch All 9 IP Databases in Parallel ---
     curl -sL $IPV_MODE -m 6 "https://ipinfo.check.place/${TARGET_IP}?lang=en" > "$TMP_DIR/maxmind.json" &
 
-    # 1b. IPinfo Demo Widget + Direct Fallback
     (
         curl -sLm 6 -A "$UA_BROWSER" "https://ipinfo.io/widget/demo/${TARGET_IP}" > "$TMP_DIR/ipinfo_widget.json"
         if ! jq -e '.data' "$TMP_DIR/ipinfo_widget.json" &>/dev/null; then
@@ -162,7 +176,6 @@ run_check_for_stack() {
         fi
     ) &
 
-    # 1c. ipregistry (Auto-extract demo key from homepage)
     (
         local reg_key="sb69ksjcajfs4c"
         local reg_html=$(curl -sL $IPV_MODE -m 5 -A "$UA_BROWSER" "https://ipregistry.co" 2>/dev/null)
@@ -174,7 +187,6 @@ run_check_for_stack() {
             "https://api.ipregistry.co/${TARGET_IP}?hostname=true&key=${reg_key}" > "$TMP_DIR/ipregistry.json"
     ) &
 
-    # 1d. ipapi (Check.Place Gateway + Direct api.ipapi.is Fallback)
     (
         curl -sL $IPV_MODE -m 6 "https://ipinfo.check.place/${TARGET_IP}?db=ipapi" > "$TMP_DIR/ipapi_is.json"
         if ! jq -e '.asn' "$TMP_DIR/ipapi_is.json" &>/dev/null; then
@@ -182,7 +194,6 @@ run_check_for_stack() {
         fi
     ) &
 
-    # 1e. Scamalytics (Check.Place Gateway + Direct HTML Scrape Fallback)
     (
         curl -sL $IPV_MODE -m 6 "https://ipinfo.check.place/${TARGET_IP}?db=scamalytics" > "$TMP_DIR/scamalytics.json"
         if ! jq -e '.scamalytics' "$TMP_DIR/scamalytics.json" &>/dev/null; then
@@ -190,18 +201,15 @@ run_check_for_stack() {
         fi
     ) &
 
-    # 1f. IP2Location, AbuseIPDB, ipdata, IPQS via Check.Place Gateway
     curl -sL $IPV_MODE -m 6 "https://ipinfo.check.place/${TARGET_IP}?db=ip2location" > "$TMP_DIR/ip2location.json" &
     curl -sL $IPV_MODE -m 6 "https://ipinfo.check.place/${TARGET_IP}?db=abuseipdb" > "$TMP_DIR/abuseipdb.json" &
     curl -sL $IPV_MODE -m 6 "https://ipinfo.check.place/${TARGET_IP}?db=ipdata" > "$TMP_DIR/ipdata.json" &
     curl -sL $IPV_MODE -m 6 "https://ipinfo.check.place/${TARGET_IP}?db=ipqualityscore" > "$TMP_DIR/ipqs.json" &
 
-    # 1g. Independent Direct Databases (ProxyCheck.io, ip-api.com, ipwho.is)
     curl -sLm 6 -A "$UA_BROWSER" "https://proxycheck.io/v2/${TARGET_IP}?vpn=1&asn=1&risk=1" > "$TMP_DIR/proxycheck.json" &
     curl -sLm 6 -A "$UA_BROWSER" "http://ip-api.com/json/${TARGET_IP}?fields=status,country,countryCode,regionName,city,zip,lat,lon,timezone,isp,org,as,mobile,proxy,hosting" > "$TMP_DIR/ip_api.json" &
     curl -sLm 6 -A "$UA_BROWSER" "https://ipwho.is/${TARGET_IP}" > "$TMP_DIR/ipwhois.json" &
 
-    # 1h. PTR (rDNS)
     (
         if command -v dig &>/dev/null; then
             dig +short -x "$TARGET_IP" | head -n1 | sed 's/\.$//' > "$TMP_DIR/ptr.txt"
@@ -212,7 +220,7 @@ run_check_for_stack() {
 
     wait
 
-    # --- 2. Parse Basic Information (MaxMind -> IPinfo -> ip-api -> ProxyCheck) ---
+    # --- 2. Parse Basic Information ---
     local ASN=$(jq -r '.ASN.AutonomousSystemNumber // empty' "$TMP_DIR/maxmind.json" 2>/dev/null)
     [ "$ASN" = "null" ] && ASN=""
     [ -n "$ASN" ] && ASN="AS${ASN}"
@@ -280,10 +288,9 @@ run_check_for_stack() {
     [ -z "$PTR_RECORD" ] && PTR_RECORD="No PTR (Missing rDNS)"
 
     # --- 3. Parse IP Types Across 6 Databases ---
-    # IPinfo
-    local T_INF_U=$(jq -r '.data.asn.type // empty' "$TMP_DIR/ipinfo_widget.json" 2>/dev/null)
-    local T_INF_C=$(jq -r '.data.company.type // empty' "$TMP_DIR/ipinfo_widget.json" 2>/dev/null)
-    if [ -z "$T_INF_U" ] || [ "$T_INF_U" = "null" ]; then
+    local T_INF_U=$(jq_get "$TMP_DIR/ipinfo_widget.json" '.data.asn.type')
+    local T_INF_C=$(jq_get "$TMP_DIR/ipinfo_widget.json" '.data.company.type')
+    if [ "$T_INF_U" = "N/A" ]; then
         if echo "$ORG" | grep -qiE "host|cloud|server|vps|data|dedi|netcup|hetzner|ovh|digitalocean|linode|vultr|leaseweb|choopa|contabo|waicore|pq.hosting|aeza|melbicom"; then
             T_INF_U="hosting"; T_INF_C="hosting"
         else
@@ -291,25 +298,16 @@ run_check_for_stack() {
         fi
     fi
 
-    # ipregistry
-    local T_REG_U=$(jq -r '.connection.type // "N/A"' "$TMP_DIR/ipregistry.json" 2>/dev/null)
-    local T_REG_C=$(jq -r '.company.type // "N/A"' "$TMP_DIR/ipregistry.json" 2>/dev/null)
-
-    # ipapi
-    local T_API_U=$(jq -r '.asn.type // "N/A"' "$TMP_DIR/ipapi_is.json" 2>/dev/null)
-    local T_API_C=$(jq -r '.company.type // "N/A"' "$TMP_DIR/ipapi_is.json" 2>/dev/null)
-
-    # IP2Location
-    local T_I2L_U=$(jq -r '.usage_type // "N/A"' "$TMP_DIR/ip2location.json" 2>/dev/null)
-    local T_I2L_C=$(jq -r '.as_info.as_usage_type // "N/A"' "$TMP_DIR/ip2location.json" 2>/dev/null)
-
-    # AbuseIPDB
-    local T_ABU_U=$(jq -r '.data.usageType // "N/A"' "$TMP_DIR/abuseipdb.json" 2>/dev/null)
-
-    # ProxyCheck
+    local T_REG_U=$(jq_get "$TMP_DIR/ipregistry.json" '.connection.type')
+    local T_REG_C=$(jq_get "$TMP_DIR/ipregistry.json" '.company.type')
+    local T_API_U=$(jq_get "$TMP_DIR/ipapi_is.json" '.asn.type')
+    local T_API_C=$(jq_get "$TMP_DIR/ipapi_is.json" '.company.type')
+    local T_I2L_U=$(jq_get "$TMP_DIR/ip2location.json" '.usage_type')
+    local T_I2L_C=$(jq_get "$TMP_DIR/ip2location.json" '.as_info.as_usage_type')
+    local T_ABU_U=$(jq_get "$TMP_DIR/abuseipdb.json" '.data.usageType')
     local T_PCK_U=$(jq -r --arg ip "$TARGET_IP" '.[$ip].type // "N/A"' "$TMP_DIR/proxycheck.json" 2>/dev/null)
 
-    # --- 4. Parse Risk Scores (Up to 6 Bars!) ---
+    # --- 4. Parse Risk Scores ---
     local I2L_SCORE=$(jq -r '.fraud_score // empty' "$TMP_DIR/ip2location.json" 2>/dev/null)
     [ "$I2L_SCORE" = "null" ] && I2L_SCORE=""
 
@@ -325,7 +323,7 @@ run_check_for_stack() {
     local IPAPI_PCT=""; local IPAPI_LVL=""
     if [ -n "$IPAPI_RAW_SCORE" ]; then
         IPAPI_PCT=$(echo "$IPAPI_RAW_SCORE" | awk '{printf "%.2f", $1 * 100}')
-        IPAPI_LVL=$(echo "$IPAPI_RAW_SCORE" | grep -oE '\([A-Za-z ]+\)' | tr -d '()')
+        IPAPI_LVL=$(echo "$IPAPI_RAW_SCORE" | grep -oE '\([A-Za-z ]+\)' | tr -d '() ')
     fi
 
     local ABUSE_SCORE=$(jq -r '.data.abuseConfidenceScore // empty' "$TMP_DIR/abuseipdb.json" 2>/dev/null)
@@ -339,7 +337,6 @@ run_check_for_stack() {
 
     # --- 5. Services, AI, CDN & Email (Strict $IPV_MODE) ---
     if [ "$IS_LOCAL_IP" -eq 1 ]; then
-        # Google & YouTube & Gemini unified detector
         (
             local yt_html=$(curl -sL $IPV_MODE -m 6 -A "$UA_BROWSER" "https://www.youtube.com/premium" 2>/dev/null)
             local gm_res=$(curl -sL $IPV_MODE -m 6 -A "$UA_BROWSER" -w "\nFINAL_URL:%{url_effective}" "https://gemini.google.com/app" 2>/dev/null)
@@ -380,7 +377,6 @@ run_check_for_stack() {
             fi
         ) &
 
-        # TikTok
         (
             local tt_out=$(curl -sL $IPV_MODE -m 5 -A "$UA_BROWSER" -w "\nCODE:%{http_code}" "https://www.tiktok.com/explore" 2>/dev/null)
             local tt_code=$(echo "$tt_out" | grep "^CODE:" | cut -d':' -f2)
@@ -394,7 +390,6 @@ run_check_for_stack() {
             fi
         ) &
 
-        # Netflix
         (
             local nf_body=$(curl -sL $IPV_MODE -m 6 -A "$UA_BROWSER" -w "\nHTTP_CODE:%{http_code}" "https://www.netflix.com/title/81280792" 2>/dev/null)
             local nf_code1=$(echo "$nf_body" | grep "^HTTP_CODE:" | cut -d':' -f2)
@@ -415,7 +410,6 @@ run_check_for_stack() {
             fi
         ) &
 
-        # Disney+
         (
             local dp_code=$(curl -sL $IPV_MODE -m 6 -A "$UA_BROWSER" -o /dev/null -w "%{http_code}" "https://www.disneyplus.com/" 2>/dev/null)
             if [ "$dp_code" = "000" ] && [ "$IPV_MODE" = "-6" ]; then
@@ -427,7 +421,6 @@ run_check_for_stack() {
             fi
         ) &
 
-        # Spotify
         (
             local sp_code=$(curl -sL $IPV_MODE -m 6 -A "$UA_BROWSER" -o /dev/null -w "%{http_code}" "https://www.spotify.com/api/signup/authenticate" 2>/dev/null)
             if [ "$sp_code" != "403" ] && [ "$sp_code" != "000" ] && [[ ! "$COUNTRY_CODE" =~ ^(RU|CN|IR|KP)$ ]]; then
@@ -437,7 +430,6 @@ run_check_for_stack() {
             fi
         ) &
 
-        # Twitch
         (
             local tw_code=$(curl -sL $IPV_MODE -m 5 -A "$UA_BROWSER" -o /dev/null -w "%{http_code}" "https://gql.twitch.tv/gql" 2>/dev/null)
             if [ "$tw_code" = "000" ] && [ "$IPV_MODE" = "-6" ]; then
@@ -449,7 +441,6 @@ run_check_for_stack() {
             fi
         ) &
 
-        # Reddit
         (
             local rd_code=$(curl -sL $IPV_MODE -m 6 -A "$UA_BROWSER" -o /dev/null -w "%{http_code}" "https://www.reddit.com/r/popular.json" 2>/dev/null)
             if [ "$rd_code" = "200" ]; then
@@ -459,7 +450,6 @@ run_check_for_stack() {
             fi
         ) &
 
-        # ChatGPT
         (
             local gpt_loc=$(curl -sL $IPV_MODE -m 5 -A "$UA_BROWSER" "https://chatgpt.com/cdn-cgi/trace" 2>/dev/null | grep "^loc=" | cut -d'=' -f2)
             local gpt_api=$(curl -sL $IPV_MODE -m 5 -A "$UA_BROWSER" "https://ios.chat.openai.com/public-api/mobile/server_status/v1" 2>/dev/null)
@@ -471,7 +461,6 @@ run_check_for_stack() {
             fi
         ) &
 
-        # Claude
         (
             local cl_loc=$(curl -sL $IPV_MODE -m 5 -A "$UA_BROWSER" "https://claude.ai/cdn-cgi/trace" 2>/dev/null | grep "^loc=" | cut -d'=' -f2)
             local cl_code=$(curl -sL $IPV_MODE -m 5 -A "$UA_BROWSER" -o /dev/null -w "%{http_code}" "https://claude.ai/api/organizations" 2>/dev/null)
@@ -482,7 +471,6 @@ run_check_for_stack() {
             fi
         ) &
 
-        # JetBrains
         (
             local jb_reg=$(curl -sL $IPV_MODE -m 5 -A "$UA_BROWSER" "https://data.services.jetbrains.com/geo" 2>/dev/null | jq -r '.code // empty' 2>/dev/null)
             if [ -n "$jb_reg" ] && [[ ! "$jb_reg" =~ ^(RU|BY|IR|KP|CU|SY)$ ]]; then
@@ -493,7 +481,6 @@ run_check_for_stack() {
             fi
         ) &
 
-        # Google Search Captcha Test
         (
             local gs_code=$(curl -s $IPV_MODE -m 6 -A "$UA_BROWSER" -o /dev/null -w "%{http_code}" "https://www.google.com/search?q=test" 2>/dev/null)
             if [ "$gs_code" = "200" ]; then echo "Clean (200 OK)" > "$TMP_DIR/bot_google"
@@ -501,7 +488,6 @@ run_check_for_stack() {
             else echo "Filtered ($gs_code)" > "$TMP_DIR/bot_google"; fi
         ) &
 
-        # CDN Edge Nodes
         (
             local cf_trace=$(curl -sL $IPV_MODE -m 5 "https://www.cloudflare.com/cdn-cgi/trace" 2>/dev/null)
             local cf_loc=$(echo "$cf_trace" | grep "^loc=" | cut -d'=' -f2)
@@ -573,10 +559,10 @@ run_check_for_stack() {
     [ "$COUNTRY_CODE" != "$REG_COUNTRY" ] && geo_badge="${BG_YELLOW} Geo-discrepant (${REG_COUNTRY}->${COUNTRY_CODE}) ${C_RESET}"
     printf "${C_CYAN}%-19s${C_RESET} %b\n" "IP Type:" "$geo_badge"
 
-    # === 2. IP TYPE (6 Databases) ===
+    # === 2. IP TYPE (Strict 11-char columns: 10-char badge + 1 space) ===
     echo -e "${C_BOLD}2. IP Type${C_RESET}"
-    printf "${C_CYAN}%-10s %-11s %-11s %-11s %-11s %-11s %-11s${C_RESET}\n" "Database:" "IPinfo" "ipregistry" "ipapi" "IP2Location" "AbuseIPDB" "ProxyCheck"
-    printf "${C_CYAN}%-10s${C_RESET} " "Usage:"
+    printf "${C_CYAN}%-10s%-11s%-11s%-11s%-11s%-11s%-11s${C_RESET}\n" "Database:" "IPinfo" "ipregistry" "ipapi" "IP2Locat." "AbuseIPDB" "ProxyCheck"
+    printf "${C_CYAN}%-10s${C_RESET}" "Usage:"
     format_type_badge "$T_INF_U"; printf " "
     format_type_badge "$T_REG_U"; printf " "
     format_type_badge "$T_API_U"; printf " "
@@ -584,17 +570,17 @@ run_check_for_stack() {
     format_type_badge "$T_ABU_U"; printf " "
     format_type_badge "$T_PCK_U"; echo ""
 
-    printf "${C_CYAN}%-10s${C_RESET} " "Company:"
+    printf "${C_CYAN}%-10s${C_RESET}" "Company:"
     format_type_badge "$T_INF_C"; printf " "
     format_type_badge "$T_REG_C"; printf " "
     format_type_badge "$T_API_C"; printf " "
     format_type_badge "$T_I2L_C"; printf " "
-    printf " %-8s   " ""
+    printf "%-11s" ""
     format_type_badge "$T_PCK_U"; echo ""
 
-    # === 3. RISK SCORE (Up to 6 Databases) ===
+    # === 3. RISK SCORE (Aligned to 15-char label + 44-char scale) ===
     echo -e "${C_BOLD}3. Risk Score${C_RESET}"
-    echo -e "${C_CYAN}Levels:        ${BG_GREEN} VeryLow      Low ${BG_YELLOW}    Medium    ${BG_RED}  High   VeryHigh ${C_RESET}"
+    printf "${C_CYAN}%-15s${C_RESET}${BG_GREEN} VeryLow      Low ${BG_YELLOW}    Medium    ${BG_RED}  High   VeryHigh ${C_RESET}\n" "Levels:"
     if [ -n "$I2L_SCORE" ]; then
         local i2l_lvl="Low"; [ "$I2L_SCORE" -ge 33 ] && i2l_lvl="Medium"; [ "$I2L_SCORE" -ge 66 ] && i2l_lvl="High"
         draw_score_bar "IP2Location" "$I2L_SCORE" "$I2L_SCORE" "$i2l_lvl"
@@ -604,7 +590,8 @@ run_check_for_stack() {
         draw_score_bar "Scamalytics" "$SCAM_SCORE" "$SCAM_SCORE" "$scam_lvl"
     fi
     if [ -n "$IPAPI_PCT" ]; then
-        local scaled_ipapi=$(awk -v p="$IPAPI_PCT" 'BEGIN { s=p*5; if(s>100) s=100; print s }')
+        # В ipapi.is порог High начинается уже с 3.00%, поэтому масштабируем под шкалу оригинала
+        local scaled_ipapi=$(awk -v p="$IPAPI_PCT" 'BEGIN { if(p>=3) s=68+(p-3)*3; else if(p>=0.85) s=35+(p-0.85)*15; else s=p*35; if(s>100) s=100; print s }')
         draw_score_bar "ipapi" "$scaled_ipapi" "${IPAPI_PCT}%" "${IPAPI_LVL:-Low}"
     fi
     if [ -n "$ABUSE_SCORE" ]; then
@@ -620,57 +607,67 @@ run_check_for_stack() {
         draw_score_bar "ProxyCheck" "$PCHECK_SCORE" "${PCHECK_SCORE}%" "$pc_lvl"
     fi
 
-    # === 4. RISK FACTORS (8 Databases) ===
+    # === 4. RISK FACTORS (Strict 8-char columns, no false->N/A bug!) ===
     echo -e "${C_BOLD}4. Risk Factors${C_RESET}"
-    printf "${C_CYAN}%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s${C_RESET}\n" "DB:" "IP2Loc" "ipapi" "ipreg." "IPQS" "Scamalyt" "ipdata" "IPinfo" "ProxyChk"
+    printf "${C_CYAN}%-9s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-8s${C_RESET}\n" "DB:" "IP2Loc" "ipapi" "ipreg." "IPQS" "Scamal." "ipdata" "IPinfo" "ProxyCk"
 
     # 1. IP2Location Factors
-    local i2l_cc=$(jq -r '.country_code // "N/A"' "$TMP_DIR/ip2location.json" 2>/dev/null)
-    local i2l_prx="false"
-    [[ "$(jq -r '.is_proxy // .proxy.is_public_proxy // .proxy.is_web_proxy // "N/A"' "$TMP_DIR/ip2location.json" 2>/dev/null)" == "true" ]] && i2l_prx="true"
-    [ "$i2l_cc" = "null" ] || [ "$i2l_cc" = "N/A" ] && i2l_prx="N/A"
-    local i2l_tor=$(jq -r '.proxy.is_tor // "N/A"' "$TMP_DIR/ip2location.json" 2>/dev/null)
-    local i2l_vpn=$(jq -r '.proxy.is_vpn // "N/A"' "$TMP_DIR/ip2location.json" 2>/dev/null)
-    local i2l_srv=$(jq -r '.proxy.is_data_center // "N/A"' "$TMP_DIR/ip2location.json" 2>/dev/null)
-    local i2l_abu=$(jq -r '.proxy.is_spammer // "N/A"' "$TMP_DIR/ip2location.json" 2>/dev/null)
-    local i2l_bot="false"
-    [[ "$(jq -r '.proxy.is_web_crawler // .proxy.is_scanner // .proxy.is_botnet // "N/A"' "$TMP_DIR/ip2location.json" 2>/dev/null)" == "true" ]] && i2l_bot="true"
-    [ "$i2l_cc" = "null" ] || [ "$i2l_cc" = "N/A" ] && i2l_bot="N/A"
+    local i2l_cc=$(jq_get "$TMP_DIR/ip2location.json" '.country_code')
+    local i2l_p0=$(jq_get "$TMP_DIR/ip2location.json" '.is_proxy')
+    local i2l_p1=$(jq_get "$TMP_DIR/ip2location.json" '.proxy.is_public_proxy')
+    local i2l_p2=$(jq_get "$TMP_DIR/ip2location.json" '.proxy.is_web_proxy')
+    local i2l_prx="N/A"
+    [[ "$i2l_p0" == "false" && "$i2l_p1" == "false" && "$i2l_p2" == "false" ]] && i2l_prx="false"
+    [[ "$i2l_p0" == "true" || "$i2l_p1" == "true" || "$i2l_p2" == "true" ]] && i2l_prx="true"
+    local i2l_tor=$(jq_get "$TMP_DIR/ip2location.json" '.proxy.is_tor')
+    local i2l_vpn=$(jq_get "$TMP_DIR/ip2location.json" '.proxy.is_vpn')
+    local i2l_srv=$(jq_get "$TMP_DIR/ip2location.json" '.proxy.is_data_center')
+    local i2l_abu=$(jq_get "$TMP_DIR/ip2location.json" '.proxy.is_spammer')
+    local i2l_b1=$(jq_get "$TMP_DIR/ip2location.json" '.proxy.is_web_crawler')
+    local i2l_b2=$(jq_get "$TMP_DIR/ip2location.json" '.proxy.is_scanner')
+    local i2l_b3=$(jq_get "$TMP_DIR/ip2location.json" '.proxy.is_botnet')
+    local i2l_bot="N/A"
+    [[ "$i2l_b1" == "false" && "$i2l_b2" == "false" && "$i2l_b3" == "false" ]] && i2l_bot="false"
+    [[ "$i2l_b1" == "true" || "$i2l_b2" == "true" || "$i2l_b3" == "true" ]] && i2l_bot="true"
 
     # 2. ipapi Factors
-    local ipa_cc=$(jq -r '.location.country_code // "N/A"' "$TMP_DIR/ipapi_is.json" 2>/dev/null)
-    local ipa_prx=$(jq -r '.is_proxy // "N/A"' "$TMP_DIR/ipapi_is.json" 2>/dev/null)
-    local ipa_tor=$(jq -r '.is_tor // "N/A"' "$TMP_DIR/ipapi_is.json" 2>/dev/null)
-    local ipa_vpn=$(jq -r '.is_vpn // "N/A"' "$TMP_DIR/ipapi_is.json" 2>/dev/null)
-    local ipa_srv=$(jq -r '.is_datacenter // "N/A"' "$TMP_DIR/ipapi_is.json" 2>/dev/null)
-    local ipa_abu=$(jq -r '.is_abuser // "N/A"' "$TMP_DIR/ipapi_is.json" 2>/dev/null)
-    local ipa_bot=$(jq -r '.is_crawler // "N/A"' "$TMP_DIR/ipapi_is.json" 2>/dev/null)
+    local ipa_cc=$(jq_get "$TMP_DIR/ipapi_is.json" '.location.country_code')
+    local ipa_prx=$(jq_get "$TMP_DIR/ipapi_is.json" '.is_proxy')
+    local ipa_tor=$(jq_get "$TMP_DIR/ipapi_is.json" '.is_tor')
+    local ipa_vpn=$(jq_get "$TMP_DIR/ipapi_is.json" '.is_vpn')
+    local ipa_srv=$(jq_get "$TMP_DIR/ipapi_is.json" '.is_datacenter')
+    local ipa_abu=$(jq_get "$TMP_DIR/ipapi_is.json" '.is_abuser')
+    local ipa_bot=$(jq_get "$TMP_DIR/ipapi_is.json" '.is_crawler')
 
     # 3. ipregistry Factors
-    local reg_cc=$(jq -r '.location.country.code // "N/A"' "$TMP_DIR/ipregistry.json" 2>/dev/null)
-    local reg_prx=$(jq -r '.security.is_proxy // "N/A"' "$TMP_DIR/ipregistry.json" 2>/dev/null)
-    local reg_tor=$(jq -r '.security.is_tor // "N/A"' "$TMP_DIR/ipregistry.json" 2>/dev/null)
-    local reg_vpn=$(jq -r '.security.is_vpn // "N/A"' "$TMP_DIR/ipregistry.json" 2>/dev/null)
-    local reg_srv=$(jq -r '.security.is_cloud_provider // "N/A"' "$TMP_DIR/ipregistry.json" 2>/dev/null)
-    local reg_abu=$(jq -r '.security.is_abuser // "N/A"' "$TMP_DIR/ipregistry.json" 2>/dev/null)
+    local reg_cc=$(jq_get "$TMP_DIR/ipregistry.json" '.location.country.code')
+    local reg_prx=$(jq_get "$TMP_DIR/ipregistry.json" '.security.is_proxy')
+    local reg_t1=$(jq_get "$TMP_DIR/ipregistry.json" '.security.is_tor')
+    local reg_t2=$(jq_get "$TMP_DIR/ipregistry.json" '.security.is_tor_exit')
+    local reg_tor="N/A"
+    [[ "$reg_t1" == "false" && "$reg_t2" == "false" ]] && reg_tor="false"
+    [[ "$reg_t1" == "true" || "$reg_t2" == "true" ]] && reg_tor="true"
+    local reg_vpn=$(jq_get "$TMP_DIR/ipregistry.json" '.security.is_vpn')
+    local reg_srv=$(jq_get "$TMP_DIR/ipregistry.json" '.security.is_cloud_provider')
+    local reg_abu=$(jq_get "$TMP_DIR/ipregistry.json" '.security.is_abuser')
 
     # 4. IPQS Factors
-    local pqs_cc=$(jq -r '.country_code // "N/A"' "$TMP_DIR/ipqs.json" 2>/dev/null)
-    local pqs_prx=$(jq -r '.proxy // "N/A"' "$TMP_DIR/ipqs.json" 2>/dev/null)
-    local pqs_tor=$(jq -r '.tor // "N/A"' "$TMP_DIR/ipqs.json" 2>/dev/null)
-    local pqs_vpn=$(jq -r '.vpn // "N/A"' "$TMP_DIR/ipqs.json" 2>/dev/null)
-    local pqs_abu=$(jq -r '.recent_abuse // "N/A"' "$TMP_DIR/ipqs.json" 2>/dev/null)
-    local pqs_bot=$(jq -r '.bot_status // "N/A"' "$TMP_DIR/ipqs.json" 2>/dev/null)
+    local pqs_cc=$(jq_get "$TMP_DIR/ipqs.json" '.country_code')
+    local pqs_prx=$(jq_get "$TMP_DIR/ipqs.json" '.proxy')
+    local pqs_tor=$(jq_get "$TMP_DIR/ipqs.json" '.tor')
+    local pqs_vpn=$(jq_get "$TMP_DIR/ipqs.json" '.vpn')
+    local pqs_abu=$(jq_get "$TMP_DIR/ipqs.json" '.recent_abuse')
+    local pqs_bot=$(jq_get "$TMP_DIR/ipqs.json" '.bot_status')
 
-    # 5. Scamalytics Factors (JSON Gateway + HTML Fallback)
-    local sc_cc=$(jq -r '.external_datasources.maxmind_geolite2.ip_country_code // empty' "$TMP_DIR/scamalytics.json" 2>/dev/null)
-    local sc_prx=$(jq -r '.external_datasources.firehol.is_proxy // empty' "$TMP_DIR/scamalytics.json" 2>/dev/null)
-    local sc_tor=$(jq -r '.external_datasources.x4bnet.is_tor // empty' "$TMP_DIR/scamalytics.json" 2>/dev/null)
-    local sc_vpn=$(jq -r '.scamalytics.scamalytics_proxy.is_vpn // empty' "$TMP_DIR/scamalytics.json" 2>/dev/null)
-    local sc_srv=$(jq -r '.scamalytics.scamalytics_proxy.is_datacenter // empty' "$TMP_DIR/scamalytics.json" 2>/dev/null)
-    local sc_abu=$(jq -r '.scamalytics.is_blacklisted_external // empty' "$TMP_DIR/scamalytics.json" 2>/dev/null)
-    local sc_bot=$(jq -r '.external_datasources.x4bnet.is_blacklisted_spambot // empty' "$TMP_DIR/scamalytics.json" 2>/dev/null)
-    if [ -z "$sc_vpn" ] && [ -s "$TMP_DIR/scamalytics.html" ]; then
+    # 5. Scamalytics Factors
+    local sc_cc=$(jq_get "$TMP_DIR/scamalytics.json" '.external_datasources.maxmind_geolite2.ip_country_code')
+    local sc_prx=$(jq_get "$TMP_DIR/scamalytics.json" '.external_datasources.firehol.is_proxy')
+    local sc_tor=$(jq_get "$TMP_DIR/scamalytics.json" '.external_datasources.x4bnet.is_tor')
+    local sc_vpn=$(jq_get "$TMP_DIR/scamalytics.json" '.scamalytics.scamalytics_proxy.is_vpn')
+    local sc_srv=$(jq_get "$TMP_DIR/scamalytics.json" '.scamalytics.scamalytics_proxy.is_datacenter')
+    local sc_abu=$(jq_get "$TMP_DIR/scamalytics.json" '.scamalytics.is_blacklisted_external')
+    local sc_bot=$(jq_get "$TMP_DIR/scamalytics.json" '.external_datasources.x4bnet.is_blacklisted_spambot')
+    if [ "$sc_vpn" = "N/A" ] && [ -s "$TMP_DIR/scamalytics.html" ]; then
         sc_cc="$COUNTRY_CODE"
         sc_vpn=$(grep -A3 -i "Anonymizing VPN" "$TMP_DIR/scamalytics.html" | grep -oE ">Yes<|>No<" | tr -d '<>' | head -n1)
         sc_tor=$(grep -A3 -i "Tor Exit Node" "$TMP_DIR/scamalytics.html" | grep -oE ">Yes<|>No<" | tr -d '<>' | head -n1)
@@ -680,19 +677,24 @@ run_check_for_stack() {
     fi
 
     # 6. ipdata Factors
-    local ipd_cc=$(jq -r '.country_code // "N/A"' "$TMP_DIR/ipdata.json" 2>/dev/null)
-    local ipd_prx=$(jq -r '.threat.is_proxy // "N/A"' "$TMP_DIR/ipdata.json" 2>/dev/null)
-    local ipd_tor=$(jq -r '.threat.is_tor // "N/A"' "$TMP_DIR/ipdata.json" 2>/dev/null)
-    local ipd_srv=$(jq -r '.threat.is_datacenter // "N/A"' "$TMP_DIR/ipdata.json" 2>/dev/null)
-    local ipd_abu=$(jq -r '.threat.is_known_abuser // "N/A"' "$TMP_DIR/ipdata.json" 2>/dev/null)
+    local ipd_cc=$(jq_get "$TMP_DIR/ipdata.json" '.country_code')
+    local ipd_prx=$(jq_get "$TMP_DIR/ipdata.json" '.threat.is_proxy')
+    local ipd_tor=$(jq_get "$TMP_DIR/ipdata.json" '.threat.is_tor')
+    local ipd_srv=$(jq_get "$TMP_DIR/ipdata.json" '.threat.is_datacenter')
+    local ipd_a1=$(jq_get "$TMP_DIR/ipdata.json" '.threat.is_threat')
+    local ipd_a2=$(jq_get "$TMP_DIR/ipdata.json" '.threat.is_known_abuser')
+    local ipd_a3=$(jq_get "$TMP_DIR/ipdata.json" '.threat.is_known_attacker')
+    local ipd_abu="N/A"
+    [[ "$ipd_a1" == "false" && "$ipd_a2" == "false" && "$ipd_a3" == "false" ]] && ipd_abu="false"
+    [[ "$ipd_a1" == "true" || "$ipd_a2" == "true" || "$ipd_a3" == "true" ]] && ipd_abu="true"
 
     # 7. IPinfo Factors
-    local inf_cc=$(jq -r '.data.country // empty' "$TMP_DIR/ipinfo_widget.json" 2>/dev/null)
-    [ -z "$inf_cc" ] && inf_cc="$COUNTRY_CODE"
-    local inf_prx=$(jq -r '.data.privacy.proxy // "N/A"' "$TMP_DIR/ipinfo_widget.json" 2>/dev/null)
-    local inf_tor=$(jq -r '.data.privacy.tor // "N/A"' "$TMP_DIR/ipinfo_widget.json" 2>/dev/null)
-    local inf_vpn=$(jq -r '.data.privacy.vpn // "N/A"' "$TMP_DIR/ipinfo_widget.json" 2>/dev/null)
-    local inf_srv=$(jq -r '.data.privacy.hosting // "N/A"' "$TMP_DIR/ipinfo_widget.json" 2>/dev/null)
+    local inf_cc=$(jq_get "$TMP_DIR/ipinfo_widget.json" '.data.country')
+    [ "$inf_cc" = "N/A" ] && inf_cc="$COUNTRY_CODE"
+    local inf_prx=$(jq_get "$TMP_DIR/ipinfo_widget.json" '.data.privacy.proxy')
+    local inf_tor=$(jq_get "$TMP_DIR/ipinfo_widget.json" '.data.privacy.tor')
+    local inf_vpn=$(jq_get "$TMP_DIR/ipinfo_widget.json" '.data.privacy.vpn')
+    local inf_srv=$(jq_get "$TMP_DIR/ipinfo_widget.json" '.data.privacy.hosting')
 
     # 8. ProxyCheck Factors
     local pck_prx=$(jq -r --arg ip "$TARGET_IP" '.[$ip].proxy // "N/A"' "$TMP_DIR/proxycheck.json" 2>/dev/null)
@@ -700,13 +702,13 @@ run_check_for_stack() {
     local pck_srv="no"; [[ "$T_PCK_U" =~ ^(Hosting|VPN)$ ]] && pck_srv="yes"
     local pck_abu="no"; [ "${PCHECK_SCORE:-0}" -ge 50 ] && pck_abu="yes"
 
-    printf "${C_CYAN}%-9s${C_RESET} " "Region:"; fmt_reg "$i2l_cc"; fmt_reg "$ipa_cc"; fmt_reg "$reg_cc"; fmt_reg "$pqs_cc"; fmt_reg "$sc_cc"; fmt_reg "$ipd_cc"; fmt_reg "$inf_cc"; fmt_reg "$COUNTRY_CODE"; echo ""
-    printf "${C_CYAN}%-9s${C_RESET} " "Proxy:";  fmt_bool "$i2l_prx"; fmt_bool "$ipa_prx"; fmt_bool "$reg_prx"; fmt_bool "$pqs_prx"; fmt_bool "$sc_prx"; fmt_bool "$ipd_prx"; fmt_bool "$inf_prx"; fmt_bool "$pck_prx"; echo ""
-    printf "${C_CYAN}%-9s${C_RESET} " "Tor:";    fmt_bool "$i2l_tor"; fmt_bool "$ipa_tor"; fmt_bool "$reg_tor"; fmt_bool "$pqs_tor"; fmt_bool "$sc_tor"; fmt_bool "$ipd_tor"; fmt_bool "$inf_tor"; fmt_bool "no"; echo ""
-    printf "${C_CYAN}%-9s${C_RESET} " "VPN:";    fmt_bool "$i2l_vpn"; fmt_bool "$ipa_vpn"; fmt_bool "$reg_vpn"; fmt_bool "$pqs_vpn"; fmt_bool "$sc_vpn"; fmt_bool "N/A";      fmt_bool "$inf_vpn"; fmt_bool "$pck_vpn"; echo ""
-    printf "${C_CYAN}%-9s${C_RESET} " "Server:"; fmt_bool "$i2l_srv"; fmt_bool "$ipa_srv"; fmt_bool "$reg_srv"; fmt_bool "N/A";      fmt_bool "$sc_srv"; fmt_bool "$ipd_srv"; fmt_bool "$inf_srv"; fmt_bool "$pck_srv"; echo ""
-    printf "${C_CYAN}%-9s${C_RESET} " "Abuser:"; fmt_bool "$i2l_abu"; fmt_bool "$ipa_abu"; fmt_bool "$reg_abu"; fmt_bool "$pqs_abu"; fmt_bool "$sc_abu"; fmt_bool "$ipd_abu"; fmt_bool "N/A";      fmt_bool "$pck_abu"; echo ""
-    printf "${C_CYAN}%-9s${C_RESET} " "Robot:";  fmt_bool "$i2l_bot"; fmt_bool "$ipa_bot"; fmt_bool "N/A";      fmt_bool "$pqs_bot"; fmt_bool "$sc_bot"; fmt_bool "N/A";      fmt_bool "N/A";      fmt_bool "no"; echo ""
+    printf "${C_CYAN}%-9s${C_RESET}" "Region:"; fmt_reg "$i2l_cc"; fmt_reg "$ipa_cc"; fmt_reg "$reg_cc"; fmt_reg "$pqs_cc"; fmt_reg "$sc_cc"; fmt_reg "$ipd_cc"; fmt_reg "$inf_cc"; fmt_reg "$COUNTRY_CODE"; echo ""
+    printf "${C_CYAN}%-9s${C_RESET}" "Proxy:";  fmt_bool "$i2l_prx"; fmt_bool "$ipa_prx"; fmt_bool "$reg_prx"; fmt_bool "$pqs_prx"; fmt_bool "$sc_prx"; fmt_bool "$ipd_prx"; fmt_bool "$inf_prx"; fmt_bool "$pck_prx"; echo ""
+    printf "${C_CYAN}%-9s${C_RESET}" "Tor:";    fmt_bool "$i2l_tor"; fmt_bool "$ipa_tor"; fmt_bool "$reg_tor"; fmt_bool "$pqs_tor"; fmt_bool "$sc_tor"; fmt_bool "$ipd_tor"; fmt_bool "$inf_tor"; fmt_bool "no"; echo ""
+    printf "${C_CYAN}%-9s${C_RESET}" "VPN:";    fmt_bool "$i2l_vpn"; fmt_bool "$ipa_vpn"; fmt_bool "$reg_vpn"; fmt_bool "$pqs_vpn"; fmt_bool "$sc_vpn"; fmt_bool "N/A";      fmt_bool "$inf_vpn"; fmt_bool "$pck_vpn"; echo ""
+    printf "${C_CYAN}%-9s${C_RESET}" "Server:"; fmt_bool "$i2l_srv"; fmt_bool "$ipa_srv"; fmt_bool "$reg_srv"; fmt_bool "N/A";      fmt_bool "$sc_srv"; fmt_bool "$ipd_srv"; fmt_bool "$inf_srv"; fmt_bool "$pck_srv"; echo ""
+    printf "${C_CYAN}%-9s${C_RESET}" "Abuser:"; fmt_bool "$i2l_abu"; fmt_bool "$ipa_abu"; fmt_bool "$reg_abu"; fmt_bool "$pqs_abu"; fmt_bool "$sc_abu"; fmt_bool "$ipd_abu"; fmt_bool "N/A";      fmt_bool "$pck_abu"; echo ""
+    printf "${C_CYAN}%-9s${C_RESET}" "Robot:";  fmt_bool "$i2l_bot"; fmt_bool "$ipa_bot"; fmt_bool "N/A";      fmt_bool "$pqs_bot"; fmt_bool "$sc_bot"; fmt_bool "N/A";      fmt_bool "N/A";      fmt_bool "no"; echo ""
 
     # === 5. STREAMING & AI ===
     if [ "$IS_LOCAL_IP" -eq 1 ]; then

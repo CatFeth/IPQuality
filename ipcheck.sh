@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# IPQuality Reborn v4.0.1 - Ultimate Dual-Stack (IPv4 + IPv6) Diagnostics
-# Zero-Config Hybrid Engine: 9 IP Databases + Media/AI + CDN + Port 25 + RBL
+# IPQuality | Dual-Stack (IPv4 + IPv6) Diagnostics
 # ==============================================================================
 
 export LC_ALL=C
-VERSION="v4.0.1 (Ultimate)"
 REPORT_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
 STACK_MODE="dual"
@@ -71,37 +69,37 @@ jq_get() {
     echo "$res"
 }
 
-# --- UI Helpers (Strict 10-char badges + 1 space = 11 chars per column) ---
+# --- UI Helpers (Compact 64-col Grid: 8-char badges + 1 space = 9 chars/col) ---
 format_type_badge() {
     local val=$(echo "$1" | tr '[:upper:]' '[:lower:]')
     case "$val" in
         *hosting*|*datacenter*|*dch*|*transit*|*vpn*)
-            printf "${BG_RED} %-8s ${C_RESET}" "Hosting" ;;
+            printf "${BG_RED} %-6s ${C_RESET}" "Host" ;;
         *cdn*|*content*)
-            printf "${BG_RED} %-8s ${C_RESET}" "CDN" ;;
+            printf "${BG_RED} %-6s ${C_RESET}" "CDN" ;;
         *spider*|*ses*|*crawler*)
-            printf "${BG_RED} %-8s ${C_RESET}" "Spider" ;;
+            printf "${BG_RED} %-6s ${C_RESET}" "Spider" ;;
         *line*|*fixed*)
-            printf "${BG_GREEN} %-8s ${C_RESET}" "Line ISP" ;;
+            printf "${BG_GREEN} %-6s ${C_RESET}" "Line" ;;
         *isp*|*residential*|*home*)
-            printf "${BG_GREEN} %-8s ${C_RESET}" "ISP" ;;
+            printf "${BG_GREEN} %-6s ${C_RESET}" "ISP" ;;
         *mobile*|*mob*|*cellular*|*wireless*)
-            printf "${BG_GREEN} %-8s ${C_RESET}" "Mobile" ;;
+            printf "${BG_GREEN} %-6s ${C_RESET}" "Mobile" ;;
         *business*|*com*|*commercial*|*corporate*|*org*|*bank*)
-            printf "${BG_YELLOW} %-8s ${C_RESET}" "Business" ;;
+            printf "${BG_YELLOW} %-6s ${C_RESET}" "Biz" ;;
         *edu*|*university*|*school*)
-            printf "${BG_YELLOW} %-8s ${C_RESET}" "Edu" ;;
+            printf "${BG_YELLOW} %-6s ${C_RESET}" "Edu" ;;
         *gov*|*mil*)
-            printf "${BG_YELLOW} %-8s ${C_RESET}" "Gov" ;;
+            printf "${BG_YELLOW} %-6s ${C_RESET}" "Gov" ;;
         *)
-            printf "${BG_GRAY} %-8s ${C_RESET}" "N/A" ;;
+            printf "${BG_GRAY} %-6s ${C_RESET}" "N/A" ;;
     esac
 }
 
-# Шкала Levels имеет длину ровно 44 символа (16 зеленых + 14 желтых + 14 красных)
+# Шкала Levels имеет длину ровно 36 символов (13 зел + 11 желт + 12 красн)
 draw_score_bar() {
     local label="$1"; local score="$2"; local disp_val="$3"; local level_txt="$4"
-    local bar_len=$(awk -v s="$score" 'BEGIN { len=int(s * 0.44); if(len<1) len=1; if(len>44) len=44; print len }')
+    local bar_len=$(awk -v s="$score" 'BEGIN { len=int(s * 0.36); if(len<1) len=1; if(len>36) len=36; print len }')
     local bar_color="$BG_GREEN"; local txt_color="$C_GREEN"
 
     case "$level_txt" in
@@ -114,43 +112,47 @@ draw_score_bar() {
     esac
 
     local spaces=$(printf "%${bar_len}s" "")
-    printf "${C_CYAN}%-15s${C_RESET}${bar_color}${spaces}${C_RESET} ${txt_color}${C_BOLD}%s|%s${C_RESET}\n" "${label}:" "$disp_val" "$level_txt"
+    printf "${C_CYAN}%-13s${C_RESET}${bar_color}${spaces}${C_RESET} ${txt_color}${C_BOLD}%s|%s${C_RESET}\n" "${label}:" "$disp_val" "$level_txt"
 }
 
-# Строго 8 символов на колонку в Risk Factors
+# Строго 7 символов на колонку в Risk Factors (8 + 8*7 = 64 символа)
 fmt_bool() {
     case "$1" in
-        true|Yes|yes|1) printf "${C_RED}${C_BOLD}%-8s${C_RESET}" "Yes" ;;
-        false|No|no|0)  printf "${C_GREEN}%-8s${C_RESET}" "No" ;;
-        *)              printf "${C_DIM}%-8s${C_RESET}" "N/A" ;;
+        true|Yes|yes|1) printf "${C_RED}${C_BOLD}%-7s${C_RESET}" "Yes" ;;
+        false|No|no|0)  printf "${C_GREEN}%-7s${C_RESET}" "No" ;;
+        *)              printf "${C_DIM}%-7s${C_RESET}" "N/A" ;;
     esac
 }
 
 fmt_reg() {
     if [ -n "$1" ] && [ "$1" != "null" ] && [ "$1" != "N/A" ] && [ ${#1} -eq 2 ]; then
-        printf "${C_GREEN}%-8s${C_RESET}" "[${1}]"
+        printf "${C_GREEN}%-7s${C_RESET}" "[${1}]"
     else
-        printf "${C_DIM}%-8s${C_RESET}" "N/A"
+        printf "${C_DIM}%-7s${C_RESET}" "N/A"
     fi
 }
 
 fmt_srv_status() {
     case "$1" in
-        Yes)      printf "${BG_GREEN} %-8s ${C_RESET}" "Yes" ;;
-        NoPrem.)  printf "${BG_RED} %-8s ${C_RESET}" "NoPrem." ;;
-        OrigOnly) printf "${BG_YELLOW} %-8s ${C_RESET}" "OrigOnly" ;;
-        NoIPv6)   printf "${BG_GRAY} %-8s ${C_RESET}" "No IPv6" ;;
-        Block|*)  printf "${BG_RED} %-8s ${C_RESET}" "Block" ;;
+        Yes)      printf "${BG_GREEN} %-6s ${C_RESET}" "Yes" ;;
+        NoPrem.)  printf "${BG_RED} %-6s ${C_RESET}" "NoPrem" ;;
+        OrigOnly) printf "${BG_YELLOW} %-6s ${C_RESET}" "Orig." ;;
+        NoIPv6)   printf "${BG_GRAY} %-6s ${C_RESET}" "NoIPv6" ;;
+        Clean*)   printf "${BG_GREEN} %-6s ${C_RESET}" "Clean" ;;
+        Captcha*) printf "${BG_YELLOW} %-6s ${C_RESET}" "Captch" ;;
+        Block|*)  printf "${BG_RED} %-6s ${C_RESET}" "Block" ;;
     esac
 }
 
 fmt_srv_type() {
     case "$1" in
-        Native)       printf "${BG_GREEN} %-8s ${C_RESET}" "Native" ;;
-        GoogleDB)     printf "${BG_YELLOW} %-8s ${C_RESET}" "GoogleDB" ;;
-        GeoDiff)      printf "${BG_YELLOW} %-8s ${C_RESET}" "GeoDiff" ;;
-        ViaDNS|Proxy) printf "${BG_YELLOW} %-8s ${C_RESET}" "ViaDNS" ;;
-        *)            printf " %-8s " "" ;;
+        Native)       printf "${BG_GREEN} %-6s ${C_RESET}" "Native" ;;
+        GoogleDB)     printf "${BG_YELLOW} %-6s ${C_RESET}" "GoogDB" ;;
+        GeoDiff)      printf "${BG_YELLOW} %-6s ${C_RESET}" "GeoDif" ;;
+        ViaDNS|Proxy) printf "${BG_YELLOW} %-6s ${C_RESET}" "ViaDNS" ;;
+        200*)         printf "${BG_GREEN} %-6s ${C_RESET}" "200 OK" ;;
+        429*)         printf "${BG_YELLOW} %-6s ${C_RESET}" "HTTP429" ;;
+        *)            printf " %-6s " "" ;;
     esac
 }
 
@@ -536,33 +538,33 @@ run_check_for_stack() {
     fi
     wait
 
-    # --- 6. Render Output ---
+# --- 6. Render Output (Strict <= 64 chars width for Mobile & Desktop) ---
     echo ""
-    echo -e "     ${C_BOLD}Report Time: ${REPORT_TIME}  Version: ${VERSION} [${IPV_LABEL}]${C_RESET}"
-    echo -e "${C_CYAN}########################################################################${C_RESET}"
+    echo -e " ${C_BOLD}${REPORT_TIME} | [${IPV_LABEL}]${C_RESET}"
+    echo -e "${C_CYAN}################################################################${C_RESET}"
     echo -e "${C_BOLD}1. Basic Information ${C_DIM}(${IPV_LABEL} Multi-DB Aggregated)${C_RESET}"
-    printf "${C_CYAN}%-19s${C_RESET} ${C_PURPLE}${C_BOLD}%s${C_RESET}\n" "Target ${IPV_LABEL}:" "${TARGET_IP}"
-    printf "${C_CYAN}%-19s${C_RESET} ${C_GREEN}%s${C_RESET}\n" "ASN:" "${ASN}"
-    printf "${C_CYAN}%-19s${C_RESET} ${C_GREEN}%s${C_RESET}\n" "Organization:" "${ORG}"
-    printf "${C_CYAN}%-19s${C_RESET} ${C_GREEN}%s${C_RESET}\n" "Location:" "${LAT_LON:-N/A}"
-    [ -n "$LAT_LON" ] && printf "${C_CYAN}%-19s${C_RESET} \033[4;32mhttps://check.place/%s,12,en\033[0m\n" "Map:" "${LAT_LON}"
-    printf "${C_CYAN}%-19s${C_RESET} ${C_GREEN}%s${C_RESET}\n" "City:" "${CITY}${POSTAL:+, $POSTAL}"
-    printf "${C_CYAN}%-19s${C_RESET} ${C_GREEN}[%s] %s${C_RESET}\n" "Actual Region:" "${COUNTRY_CODE}" "${COUNTRY_NAME}"
-    printf "${C_CYAN}%-19s${C_RESET} ${C_GREEN}[%s]${C_RESET}\n" "Registered Region:" "${REG_COUNTRY}"
-    printf "${C_CYAN}%-19s${C_RESET} ${C_GREEN}%s${C_RESET}\n" "Time Zone:" "${TIMEZONE}"
-    printf "${C_CYAN}%-19s${C_RESET} %s\n" "PTR (rDNS):" "${PTR_RECORD}"
+    printf "${C_CYAN}%-16s${C_RESET} ${C_PURPLE}${C_BOLD}%s${C_RESET}\n" "Target ${IPV_LABEL}:" "${TARGET_IP}"
+    printf "${C_CYAN}%-16s${C_RESET} ${C_GREEN}%s${C_RESET}\n" "ASN:" "${ASN}"
+    printf "${C_CYAN}%-16s${C_RESET} ${C_GREEN}%s${C_RESET}\n" "Organization:" "${ORG}"
+    printf "${C_CYAN}%-16s${C_RESET} ${C_GREEN}%s${C_RESET}\n" "Location:" "${LAT_LON:-N/A}"
+    [ -n "$LAT_LON" ] && printf "${C_CYAN}%-16s${C_RESET} \033[4;32mhttps://check.place/%s,12,en\033[0m\n" "Map:" "${LAT_LON}"
+    printf "${C_CYAN}%-16s${C_RESET} ${C_GREEN}%s${C_RESET}\n" "City:" "${CITY}${POSTAL:+, $POSTAL}"
+    printf "${C_CYAN}%-16s${C_RESET} ${C_GREEN}[%s] %s${C_RESET}\n" "Actual Region:" "${COUNTRY_CODE}" "${COUNTRY_NAME}"
+    printf "${C_CYAN}%-16s${C_RESET} ${C_GREEN}[%s]${C_RESET}\n" "Registered Reg:" "${REG_COUNTRY}"
+    printf "${C_CYAN}%-16s${C_RESET} ${C_GREEN}%s${C_RESET}\n" "Time Zone:" "${TIMEZONE}"
+    printf "${C_CYAN}%-16s${C_RESET} %s\n" "PTR (rDNS):" "${PTR_RECORD}"
 
     local cf_cdn=$(cat "$TMP_DIR/cdn_cf" 2>/dev/null); local yt_cdn=$(cat "$TMP_DIR/cdn_yt" 2>/dev/null)
-    [ -n "$cf_cdn" ] && printf "${C_CYAN}%-19s${C_RESET} ${C_GREEN}Cloudflare: %-10s Google/YT: %s${C_RESET}\n" "CDN Edge Nodes:" "${cf_cdn}" "${yt_cdn:-N/A}"
+    [ -n "$cf_cdn" ] && printf "${C_CYAN}%-16s${C_RESET} ${C_GREEN}CF: %-9s YT: %s${C_RESET}\n" "CDN Edges:" "${cf_cdn}" "${yt_cdn:-N/A}"
 
     local geo_badge="${BG_GREEN} Geo-consistent ${C_RESET}"
     [ "$COUNTRY_CODE" != "$REG_COUNTRY" ] && geo_badge="${BG_YELLOW} Geo-discrepant (${REG_COUNTRY}->${COUNTRY_CODE}) ${C_RESET}"
-    printf "${C_CYAN}%-19s${C_RESET} %b\n" "IP Type:" "$geo_badge"
+    printf "${C_CYAN}%-16s${C_RESET} %b\n" "IP Type:" "$geo_badge"
 
-    # === 2. IP TYPE (Strict 11-char columns: 10-char badge + 1 space) ===
+    # === 2. IP TYPE (9-char label + 6 * 9-char cols = 63 chars) ===
     echo -e "${C_BOLD}2. IP Type${C_RESET}"
-    printf "${C_CYAN}%-10s%-11s%-11s%-11s%-11s%-11s%-11s${C_RESET}\n" "Database:" "IPinfo" "ipregistry" "ipapi" "IP2Locat." "AbuseIPDB" "ProxyCheck"
-    printf "${C_CYAN}%-10s${C_RESET}" "Usage:"
+    printf "${C_CYAN}%-9s%-9s%-9s%-9s%-9s%-9s%-9s${C_RESET}\n" "DB:" "IPinfo" "ipreg." "ipapi" "IP2Loc" "AbuseIP" "ProxyCk"
+    printf "${C_CYAN}%-9s${C_RESET}" "Usage:"
     format_type_badge "$T_INF_U"; printf " "
     format_type_badge "$T_REG_U"; printf " "
     format_type_badge "$T_API_U"; printf " "
@@ -570,17 +572,17 @@ run_check_for_stack() {
     format_type_badge "$T_ABU_U"; printf " "
     format_type_badge "$T_PCK_U"; echo ""
 
-    printf "${C_CYAN}%-10s${C_RESET}" "Company:"
+    printf "${C_CYAN}%-9s${C_RESET}" "Company:"
     format_type_badge "$T_INF_C"; printf " "
     format_type_badge "$T_REG_C"; printf " "
     format_type_badge "$T_API_C"; printf " "
     format_type_badge "$T_I2L_C"; printf " "
-    printf "%-11s" ""
+    printf "%-9s" ""
     format_type_badge "$T_PCK_U"; echo ""
 
-    # === 3. RISK SCORE (Aligned to 15-char label + 44-char scale) ===
+    # === 3. RISK SCORE (13-char label + 36-char scale = 49 chars + text) ===
     echo -e "${C_BOLD}3. Risk Score${C_RESET}"
-    printf "${C_CYAN}%-15s${C_RESET}${BG_GREEN} VeryLow      Low ${BG_YELLOW}    Medium    ${BG_RED}  High   VeryHigh ${C_RESET}\n" "Levels:"
+    printf "${C_CYAN}%-13s${C_RESET}${BG_GREEN} VeryLow  Low${BG_YELLOW}   Medium  ${BG_RED} High  VHigh${C_RESET}\n" "Levels:"
     if [ -n "$I2L_SCORE" ]; then
         local i2l_lvl="Low"; [ "$I2L_SCORE" -ge 33 ] && i2l_lvl="Medium"; [ "$I2L_SCORE" -ge 66 ] && i2l_lvl="High"
         draw_score_bar "IP2Location" "$I2L_SCORE" "$I2L_SCORE" "$i2l_lvl"
@@ -590,7 +592,6 @@ run_check_for_stack() {
         draw_score_bar "Scamalytics" "$SCAM_SCORE" "$SCAM_SCORE" "$scam_lvl"
     fi
     if [ -n "$IPAPI_PCT" ]; then
-        # В ipapi.is порог High начинается уже с 3.00%, поэтому масштабируем под шкалу оригинала
         local scaled_ipapi=$(awk -v p="$IPAPI_PCT" 'BEGIN { if(p>=3) s=68+(p-3)*3; else if(p>=0.85) s=35+(p-0.85)*15; else s=p*35; if(s>100) s=100; print s }')
         draw_score_bar "ipapi" "$scaled_ipapi" "${IPAPI_PCT}%" "${IPAPI_LVL:-Low}"
     fi
@@ -607,9 +608,9 @@ run_check_for_stack() {
         draw_score_bar "ProxyCheck" "$PCHECK_SCORE" "${PCHECK_SCORE}%" "$pc_lvl"
     fi
 
-    # === 4. RISK FACTORS (Strict 8-char columns, no false->N/A bug!) ===
+    # === 4. RISK FACTORS (8-char label + 8 * 7-char cols = 64 chars) ===
     echo -e "${C_BOLD}4. Risk Factors${C_RESET}"
-    printf "${C_CYAN}%-9s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-8s${C_RESET}\n" "DB:" "IP2Loc" "ipapi" "ipreg." "IPQS" "Scamal." "ipdata" "IPinfo" "ProxyCk"
+    printf "${C_CYAN}%-8s%-7s%-7s%-7s%-7s%-7s%-7s%-7s%-7s${C_RESET}\n" "DB:" "IP2Loc" "ipapi" "ipreg" "IPQS" "Scam." "ipdata" "IPinfo" "PrxCk"
 
     # 1. IP2Location Factors
     local i2l_cc=$(jq_get "$TMP_DIR/ip2location.json" '.country_code')
@@ -702,69 +703,73 @@ run_check_for_stack() {
     local pck_srv="no"; [[ "$T_PCK_U" =~ ^(Hosting|VPN)$ ]] && pck_srv="yes"
     local pck_abu="no"; [ "${PCHECK_SCORE:-0}" -ge 50 ] && pck_abu="yes"
 
-    printf "${C_CYAN}%-9s${C_RESET}" "Region:"; fmt_reg "$i2l_cc"; fmt_reg "$ipa_cc"; fmt_reg "$reg_cc"; fmt_reg "$pqs_cc"; fmt_reg "$sc_cc"; fmt_reg "$ipd_cc"; fmt_reg "$inf_cc"; fmt_reg "$COUNTRY_CODE"; echo ""
-    printf "${C_CYAN}%-9s${C_RESET}" "Proxy:";  fmt_bool "$i2l_prx"; fmt_bool "$ipa_prx"; fmt_bool "$reg_prx"; fmt_bool "$pqs_prx"; fmt_bool "$sc_prx"; fmt_bool "$ipd_prx"; fmt_bool "$inf_prx"; fmt_bool "$pck_prx"; echo ""
-    printf "${C_CYAN}%-9s${C_RESET}" "Tor:";    fmt_bool "$i2l_tor"; fmt_bool "$ipa_tor"; fmt_bool "$reg_tor"; fmt_bool "$pqs_tor"; fmt_bool "$sc_tor"; fmt_bool "$ipd_tor"; fmt_bool "$inf_tor"; fmt_bool "no"; echo ""
-    printf "${C_CYAN}%-9s${C_RESET}" "VPN:";    fmt_bool "$i2l_vpn"; fmt_bool "$ipa_vpn"; fmt_bool "$reg_vpn"; fmt_bool "$pqs_vpn"; fmt_bool "$sc_vpn"; fmt_bool "N/A";      fmt_bool "$inf_vpn"; fmt_bool "$pck_vpn"; echo ""
-    printf "${C_CYAN}%-9s${C_RESET}" "Server:"; fmt_bool "$i2l_srv"; fmt_bool "$ipa_srv"; fmt_bool "$reg_srv"; fmt_bool "N/A";      fmt_bool "$sc_srv"; fmt_bool "$ipd_srv"; fmt_bool "$inf_srv"; fmt_bool "$pck_srv"; echo ""
-    printf "${C_CYAN}%-9s${C_RESET}" "Abuser:"; fmt_bool "$i2l_abu"; fmt_bool "$ipa_abu"; fmt_bool "$reg_abu"; fmt_bool "$pqs_abu"; fmt_bool "$sc_abu"; fmt_bool "$ipd_abu"; fmt_bool "N/A";      fmt_bool "$pck_abu"; echo ""
-    printf "${C_CYAN}%-9s${C_RESET}" "Robot:";  fmt_bool "$i2l_bot"; fmt_bool "$ipa_bot"; fmt_bool "N/A";      fmt_bool "$pqs_bot"; fmt_bool "$sc_bot"; fmt_bool "N/A";      fmt_bool "N/A";      fmt_bool "no"; echo ""
+    printf "${C_CYAN}%-8s${C_RESET}" "Region:"; fmt_reg "$i2l_cc"; fmt_reg "$ipa_cc"; fmt_reg "$reg_cc"; fmt_reg "$pqs_cc"; fmt_reg "$sc_cc"; fmt_reg "$ipd_cc"; fmt_reg "$inf_cc"; fmt_reg "$COUNTRY_CODE"; echo ""
+    printf "${C_CYAN}%-8s${C_RESET}" "Proxy:";  fmt_bool "$i2l_prx"; fmt_bool "$ipa_prx"; fmt_bool "$reg_prx"; fmt_bool "$pqs_prx"; fmt_bool "$sc_prx"; fmt_bool "$ipd_prx"; fmt_bool "$inf_prx"; fmt_bool "$pck_prx"; echo ""
+    printf "${C_CYAN}%-8s${C_RESET}" "Tor:";    fmt_bool "$i2l_tor"; fmt_bool "$ipa_tor"; fmt_bool "$reg_tor"; fmt_bool "$pqs_tor"; fmt_bool "$sc_tor"; fmt_bool "$ipd_tor"; fmt_bool "$inf_tor"; fmt_bool "no"; echo ""
+    printf "${C_CYAN}%-8s${C_RESET}" "VPN:";    fmt_bool "$i2l_vpn"; fmt_bool "$ipa_vpn"; fmt_bool "$reg_vpn"; fmt_bool "$pqs_vpn"; fmt_bool "$sc_vpn"; fmt_bool "N/A";      fmt_bool "$inf_vpn"; fmt_bool "$pck_vpn"; echo ""
+    printf "${C_CYAN}%-8s${C_RESET}" "Server:"; fmt_bool "$i2l_srv"; fmt_bool "$ipa_srv"; fmt_bool "$reg_srv"; fmt_bool "N/A";      fmt_bool "$sc_srv"; fmt_bool "$ipd_srv"; fmt_bool "$inf_srv"; fmt_bool "$pck_srv"; echo ""
+    printf "${C_CYAN}%-8s${C_RESET}" "Abuser:"; fmt_bool "$i2l_abu"; fmt_bool "$ipa_abu"; fmt_bool "$reg_abu"; fmt_bool "$pqs_abu"; fmt_bool "$sc_abu"; fmt_bool "$ipd_abu"; fmt_bool "N/A";      fmt_bool "$pck_abu"; echo ""
+    printf "${C_CYAN}%-8s${C_RESET}" "Robot:";  fmt_bool "$i2l_bot"; fmt_bool "$ipa_bot"; fmt_bool "N/A";      fmt_bool "$pqs_bot"; fmt_bool "$sc_bot"; fmt_bool "N/A";      fmt_bool "N/A";      fmt_bool "no"; echo ""
 
-    # === 5. STREAMING & AI ===
+    # === 5. STREAMING & AI (2 balanced rows of 6 cols: 8 + 6*9 = 62 chars!) ===
     if [ "$IS_LOCAL_IP" -eq 1 ]; then
-        echo -e "${C_BOLD}5. Accessibility Check for Media & AI Services (${IPV_LABEL} Strict)${C_RESET}"
-        local srvs=("tiktok:TikTok" "disney:Disney+" "netflix:Netflix" "youtube:YouTube" "spotify:Spotify" "twitch:Twitch" "reddit:Reddit")
-        printf "${C_CYAN}%-9s${C_RESET}" "Media:"
-        for item in "${srvs[@]}"; do printf "${C_CYAN}%-11s${C_RESET}" "${item#*:}"; done; echo ""
-        printf "${C_CYAN}%-9s${C_RESET}" "Status:"
+        echo -e "${C_BOLD}5. Media & AI Accessibility (${IPV_LABEL} Strict)${C_RESET}"
+        # Row 1: 6 Media Services
+        local srvs=("tiktok:TikTok" "disney:Disney+" "netflix:Netflix" "youtube:YouTube" "spotify:Spotify" "twitch:Twitch")
+        printf "${C_CYAN}%-8s${C_RESET}" "Media:"
+        for item in "${srvs[@]}"; do printf "${C_CYAN}%-9s${C_RESET}" "${item#*:}"; done; echo ""
+        printf "${C_CYAN}%-8s${C_RESET}" "Status:"
         for item in "${srvs[@]}"; do local st=$(cut -d'|' -f1 "$TMP_DIR/srv_${item%:*}" 2>/dev/null); fmt_srv_status "${st:-Block}"; printf " "; done; echo ""
-        printf "${C_CYAN}%-9s${C_RESET}" "Region:"
+        printf "${C_CYAN}%-8s${C_RESET}" "Region:"
         for item in "${srvs[@]}"; do
             local rg=$(cut -d'|' -f2 "$TMP_DIR/srv_${item%:*}" 2>/dev/null)
-            [ -n "$rg" ] && [ "$rg" != "N/A" ] && printf "${C_GREEN}%-11s${C_RESET}" "  [${rg}]" || printf "%-11s" "   -"
+            [ -n "$rg" ] && [ "$rg" != "N/A" ] && printf "${C_GREEN}%-9s${C_RESET}" "  [${rg}]" || printf "%-9s" "   -"
         done; echo ""
-        printf "${C_CYAN}%-9s${C_RESET}" "Type:"
+        printf "${C_CYAN}%-8s${C_RESET}" "Type:"
         for item in "${srvs[@]}"; do local tp=$(cut -d'|' -f3 "$TMP_DIR/srv_${item%:*}" 2>/dev/null); fmt_srv_type "${tp:-N/A}"; printf " "; done; echo ""
 
-        local ais=("chatgpt:ChatGPT" "claude:Claude" "gemini:Gemini" "jetbrains:JetBrains")
+        # Row 2: 4 AI + Reddit + Google Search (6 columns total = 62 chars)
+        local ais=("ai_chatgpt:ChatGPT" "ai_claude:Claude" "ai_gemini:Gemini" "ai_jetbrains:JetBrn" "srv_reddit:Reddit")
         echo ""
-        printf "${C_CYAN}%-9s${C_RESET}" "AI & Dev:"
-        for item in "${ais[@]}"; do printf "${C_CYAN}%-11s${C_RESET}" "${item#*:}"; done
-        printf "${C_CYAN}%-16s${C_RESET}\n" "Google Search"
+        printf "${C_CYAN}%-8s${C_RESET}" "AI/Web:"
+        for item in "${ais[@]}"; do printf "${C_CYAN}%-9s${C_RESET}" "${item#*:}"; done
+        printf "${C_CYAN}%-9s${C_RESET}\n" "Google"
 
-        printf "${C_CYAN}%-9s${C_RESET}" "Status:"
-        for item in "${ais[@]}"; do local st=$(cut -d'|' -f1 "$TMP_DIR/ai_${item%:*}" 2>/dev/null); fmt_srv_status "${st:-Block}"; printf " "; done
+        printf "${C_CYAN}%-8s${C_RESET}" "Status:"
+        for item in "${ais[@]}"; do local st=$(cut -d'|' -f1 "$TMP_DIR/${item%:*}" 2>/dev/null); fmt_srv_status "${st:-Block}"; printf " "; done
         local gbot=$(cat "$TMP_DIR/bot_google" 2>/dev/null)
         local g_gl=$(cat "$TMP_DIR/google_gl" 2>/dev/null)
-        [[ "$gbot" == *"Clean"* ]] && printf "${BG_GREEN} %-14s ${C_RESET}\n" "$gbot" || printf "${BG_RED} %-14s ${C_RESET}\n" "${gbot:-Blocked}"
+        fmt_srv_status "${gbot:-Block}"; echo ""
 
-        printf "${C_CYAN}%-9s${C_RESET}" "Region:"
+        printf "${C_CYAN}%-8s${C_RESET}" "Region:"
         for item in "${ais[@]}"; do
-            local rg=$(cut -d'|' -f2 "$TMP_DIR/ai_${item%:*}" 2>/dev/null)
-            [ -n "$rg" ] && [ "$rg" != "N/A" ] && printf "${C_GREEN}%-11s${C_RESET}" "  [${rg}]" || printf "%-11s" "   -"
+            local rg=$(cut -d'|' -f2 "$TMP_DIR/${item%:*}" 2>/dev/null)
+            [ -n "$rg" ] && [ "$rg" != "N/A" ] && printf "${C_GREEN}%-9s${C_RESET}" "  [${rg}]" || printf "%-9s" "   -"
         done
-        [ -n "$g_gl" ] && [ "$g_gl" != "N/A" ] && printf "${C_GREEN}     [%s]${C_RESET}" "$g_gl"
+        [ -n "$g_gl" ] && [ "$g_gl" != "N/A" ] && printf "${C_GREEN}%-9s${C_RESET}" "  [${g_gl}]" || printf "%-9s" "   -"
         echo ""
 
-        printf "${C_CYAN}%-9s${C_RESET}" "Type:"
-        for item in "${ais[@]}"; do local tp=$(cut -d'|' -f3 "$TMP_DIR/ai_${item%:*}" 2>/dev/null); fmt_srv_type "${tp:-N/A}"; printf " "; done; echo ""
+        printf "${C_CYAN}%-8s${C_RESET}" "Type:"
+        for item in "${ais[@]}"; do local tp=$(cut -d'|' -f3 "$TMP_DIR/${item%:*}" 2>/dev/null); fmt_srv_type "${tp:-N/A}"; printf " "; done
+        [[ "$gbot" == *"200"* ]] && fmt_srv_type "200 OK" || fmt_srv_type "N/A"
+        echo ""
     fi
 
-    # === 6. EMAIL & DNSBL ===
+    # === 6. EMAIL & DNSBL (60 chars max) ===
     if [ "$IPV_MODE" = "-4" ]; then
-        echo -e "${C_BOLD}6. Email Service Availability & Blacklist Detection (Top-30 RBL)${C_RESET}"
+        echo -e "${C_BOLD}6. Email & Blacklist Detection (Top-30 RBL)${C_RESET}"
         if [ "$IS_LOCAL_IP" -eq 1 ]; then
             local any_port25=0
             for f in "$TMP_DIR"/mx_*; do [ -f "$f" ] && [ "$(cat "$f")" = "OK" ] && any_port25=1; done
             if [ "$any_port25" -eq 1 ]; then
-                echo -e "${C_CYAN}Local Port 25 Outbound:${C_RESET} ${C_GREEN}${C_BOLD}Available${C_RESET}"
+                echo -e "${C_CYAN}Port 25 Outbound:${C_RESET} ${C_GREEN}${C_BOLD}Available${C_RESET}"
                 printf "${C_CYAN}Conn: ${C_RESET}"
                 for name in Gmail Outlook Yahoo Apple MailRU Proton; do
-                    [ "$(cat "$TMP_DIR/mx_${name}" 2>/dev/null)" = "OK" ] && printf "${BG_GREEN}✓ %-7s${C_RESET} " "$name" || printf "${BG_RED}✗ %-7s${C_RESET} " "$name"
+                    [ "$(cat "$TMP_DIR/mx_${name}" 2>/dev/null)" = "OK" ] && printf "${BG_GREEN}✓%-7s${C_RESET} " "$name" || printf "${BG_RED}✗%-7s${C_RESET} " "$name"
                 done; echo ""
             else
-                echo -e "${C_CYAN}Local Port 25 Outbound:${C_RESET} ${C_RED}${C_BOLD}Blocked${C_RESET}"
-                echo -e "${C_CYAN}Conn:${C_RESET} ${C_RED}Remote Port 25 unreachable (Blocked by ISP/Hosting)${C_RESET}"
+                echo -e "${C_CYAN}Port 25 Outbound:${C_RESET} ${C_RED}${C_BOLD}Blocked${C_RESET}"
+                echo -e "${C_CYAN}Conn:${C_RESET} ${C_RED}Remote Port 25 unreachable (Blocked by ISP)${C_RESET}"
             fi
         fi
         local total_rbl=0; local clean_rbl=0; local marked_rbl=0; local black_rbl=0; local listed_names=()
@@ -777,10 +782,10 @@ run_check_for_stack() {
                 BLACKLISTED) black_rbl=$((black_rbl + 1)); listed_names+=("${C_RED}${rbl_name}${C_RESET}") ;;
             esac
         done
-        echo -e "${C_CYAN}DNSBL database:${C_RESET}  ${C_BLUE}${C_BOLD}Checked ${total_rbl}${C_RESET}   ${C_GREEN}${C_BOLD}Clean ${clean_rbl}${C_RESET}   ${C_YELLOW}${C_BOLD}Marked ${marked_rbl}${C_RESET}   ${C_RED}${C_BOLD}Blacklisted ${black_rbl}${C_RESET}"
-        [ ${#listed_names[@]} -gt 0 ] && echo -e "${C_CYAN}Listed in:${C_RESET}       ${listed_names[*]}"
+        echo -e "${C_CYAN}DNSBL:${C_RESET} ${C_BLUE}${C_BOLD}Total ${total_rbl}${C_RESET}  ${C_GREEN}${C_BOLD}Clean ${clean_rbl}${C_RESET}  ${C_YELLOW}${C_BOLD}Marked ${marked_rbl}${C_RESET}  ${C_RED}${C_BOLD}Blacklisted ${black_rbl}${C_RESET}"
+        [ ${#listed_names[@]} -gt 0 ] && echo -e "${C_CYAN}Listed:${C_RESET} ${listed_names[*]}"
     fi
-    echo -e "${C_CYAN}========================================================================${C_RESET}"
+    echo -e "${C_CYAN}================================================================${C_RESET}"
 }
 
 # ==============================================================================
